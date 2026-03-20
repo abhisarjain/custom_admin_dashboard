@@ -46,4 +46,13 @@ public class InvitationController {
         invitationService.acceptInvitation(request, tenant);
         return ResponseEntity.ok(ApiResponse.success(null, "Invitation accepted successfully"));
     }
+
+    @DeleteMapping("/api/projects/{projectId}/invitations/{invitationId}")
+    public ResponseEntity<ApiResponse<Void>> cancelInvitation(
+            @PathVariable Long projectId,
+            @PathVariable Long invitationId,
+            @AuthenticationPrincipal Tenant tenant) {
+        invitationService.cancelInvitation(projectId, invitationId, tenant);
+        return ResponseEntity.ok(ApiResponse.success(null, "Invitation cancelled successfully"));
+    }
 }

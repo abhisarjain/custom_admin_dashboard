@@ -272,8 +272,21 @@ const fetchAll = async () => {
       toast.success('Invitation sent!');
       setShowInviteModal(false);
       setInviteForm({ email: '', roleId: '' });
+      fetchAll();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to send invitation');
+    }
+  };
+
+  const handleCancelInvitation = async (member) => {
+    if (!confirm(`Cancel invitation for ${member.email}?`)) return;
+
+    try {
+      await api.delete(`/api/projects/${projectId}/invitations/${member.invitationId}`);
+      toast.success('Invitation cancelled!');
+      fetchAll();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to cancel invitation');
     }
   };
 
@@ -746,6 +759,11 @@ const fetchAll = async () => {
                             </div>
                         </div>
                         <div className="flex items-center gap-3">
+                            {member.isPending && (
+                              <span className="text-xs bg-yellow-500/20 text-yellow-400 px-3 py-1 rounded-full">
+                                Pending
+                              </span>
+                            )}
                             <span className="text-xs bg-purple-500/20 text-purple-400 px-3 py-1 rounded-full">
                                 {member.role}
                             </span>
@@ -754,22 +772,34 @@ const fetchAll = async () => {
                                 Owner
                               </span>
                             )}
-                            <button
-                                type="button"
-                                onClick={() => openEditMemberModal(member)}
-                                disabled={!memberAccess.canEdit}
-                                className="rounded-lg border border-indigo-500/20 px-3 py-1.5 text-xs text-indigo-400 transition hover:bg-indigo-500/10 disabled:border-gray-700 disabled:text-gray-500"
-                            >
-                                Edit Role
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => handleRemoveMember(member)}
-                                disabled={!canRemoveMembers || member.isOwner}
-                                className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10 disabled:border-gray-700 disabled:text-gray-500"
-                            >
-                                Remove
-                            </button>
+                            {member.isPending ? (
+                              <button
+                                  type="button"
+                                  onClick={() => handleCancelInvitation(member)}
+                                  className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10"
+                              >
+                                  Cancel Invitation
+                              </button>
+                            ) : (
+                              <>
+                                <button
+                                    type="button"
+                                    onClick={() => openEditMemberModal(member)}
+                                    disabled={!memberAccess.canEdit}
+                                    className="rounded-lg border border-indigo-500/20 px-3 py-1.5 text-xs text-indigo-400 transition hover:bg-indigo-500/10 disabled:border-gray-700 disabled:text-gray-500"
+                                >
+                                    Edit Role
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleRemoveMember(member)}
+                                    disabled={!canRemoveMembers || member.isOwner}
+                                    className="rounded-lg border border-red-500/20 px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10 disabled:border-gray-700 disabled:text-gray-500"
+                                >
+                                    Remove
+                                </button>
+                              </>
+                            )}
                         </div>
                     </div>
                 ))}
@@ -934,21 +964,6 @@ const fetchAll = async () => {
                   className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-700 focus:border-indigo-500 focus:outline-none"
                   placeholder="e.g. Editor" required />
               </div>
-              {editingRole && (
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-400 block">Grant Permissions</label>
-                  {['canGrantView', 'canGrantCreate', 'canGrantEdit', 'canGrantDelete', 'canGrantDelegate'].map((perm) => (
-                    <label key={perm} className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" checked={roleForm[perm]}
-                        onChange={(e) => setRoleForm({ ...roleForm, [perm]: e.target.checked })}
-                        className="w-4 h-4 accent-indigo-500" />
-                      <span className="text-gray-300 text-sm capitalize">
-                        {perm.replace('canGrant', 'Grant ')}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => {
                   setShowRoleModal(false);

@@ -158,6 +158,36 @@ public class InvitationService {
         invitationRepository.save(invitation);
     }
 
+    @Transactional
+    public void cancelInvitation(Long projectId, Long invitationId, Tenant tenant) {
+        Invitation invitation = invitationRepository.findById(invitationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Invitation not found"));
+
+        if (!invitation.getProject().getId().equals(projectId)) {
+            throw new ResourceNotFoundException("Invitation not found");
+        }
+
+        Project project = invitation.getProject();
+        boolean isOwner = project.getTenant().getId().equals(tenant.getId());
+        boolean canInvite = false;
+
+        if (!isOwner) {
+            ProjectMember inviterMember = projectMemberRepository.findByProjectIdAndTenantId(projectId, tenant.getId())
+                    .orElseThrow(() -> new BadRequestException("Access denied"));
+
+            RoleMemberPermission memberPermission = roleMemberPermissionRepository
+                    .findByRoleId(inviterMember.getRole().getId())
+                    .orElse(RoleMemberPermission.builder().build());
+            canInvite = memberPermission.isCanInvite();
+        }
+
+        if (!isOwner && !canInvite) {
+            throw new BadRequestException("Access denied");
+        }
+
+        invitationRepository.delete(invitation);
+    }
+
     private InvitationResponse mapToResponse(Invitation inv) {
         return InvitationResponse.builder()
                 .id(inv.getId())

@@ -204,20 +204,46 @@ public List<Map<String, Object>> getMembers(Long projectId, Tenant tenant) {
     Project project = projectRepository.findById(projectId)
             .orElseThrow(() -> new ResourceNotFoundException("Project not found"));
 
-    return projectMemberRepository.findAllByProjectId(projectId)
+    List<Map<String, Object>> memberRows = projectMemberRepository.findAllByProjectId(projectId)
             .stream()
             .map(member -> {
                 Map<String, Object> map = new HashMap<>();
                 map.put("id", member.getId());
+                map.put("entryType", "member");
                 map.put("tenantId", member.getTenant().getId());
                 map.put("name", member.getTenant().getName());
                 map.put("email", member.getTenant().getEmail());
                 map.put("role", member.getRole().getName());
                 map.put("roleId", member.getRole().getId());
                 map.put("isOwner", member.getTenant().getId().equals(project.getTenant().getId()));
+                map.put("status", "active");
+                map.put("isPending", false);
                 return map;
             })
             .collect(Collectors.toList());
+
+    List<Map<String, Object>> pendingRows = invitationRepository.findAllByProjectId(projectId)
+            .stream()
+            .filter(inv -> "pending".equalsIgnoreCase(inv.getStatus()))
+            .map(inv -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", "pending-" + inv.getId());
+                map.put("invitationId", inv.getId());
+                map.put("entryType", "invitation");
+                map.put("tenantId", null);
+                map.put("name", inv.getEmail());
+                map.put("email", inv.getEmail());
+                map.put("role", inv.getRole().getName());
+                map.put("roleId", inv.getRole().getId());
+                map.put("isOwner", false);
+                map.put("status", "pending");
+                map.put("isPending", true);
+                return map;
+            })
+            .collect(Collectors.toList());
+
+    memberRows.addAll(pendingRows);
+    return memberRows;
 }
 
     @Transactional
