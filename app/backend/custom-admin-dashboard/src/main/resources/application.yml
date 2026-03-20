@@ -9,8 +9,8 @@ spring:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 
   datasource:
-    url: jdbc:postgresql://aws-0-ap-south-1.pooler.supabase.com:5432/postgres
-    username: postgres.smolrlrhchqxmvrkwdgw
+    url: jdbc:postgresql://db.smolrlrhchqxmvrkwdgw.supabase.co:5432/postgres?user=postgres&password=Cabhipersonal@1289
+    username: postgres
     password: Cabhipersonal@1289
     driver-class-name: org.postgresql.Driver
 
