@@ -9,19 +9,19 @@ spring:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/admin_platform_db
-    username: admin_user
-    password: admin123
+    url: jdbc:postgresql://db.smolrlrhchqxmvrkwdgw.supabase.co:5432/postgres
+    username: postgres
+    password: Cabhipersonal@1289
     driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
+        format_sql: false
 
   security:
     user:
@@ -29,11 +29,12 @@ spring:
 
 jasypt:
   encryptor:
-    password: your-secret-encryption-key
+    password: myJasyptEncryptionKey2024AdminDashboard
 
 jwt:
-  secret: your-super-secret-jwt-key-which-is-long-enough-for-hs256-algorithm
+  secret: mySecretJwtKey2024ForAdminDashboardPlatformApp
   expiration: 86400000
+
 logging:
   level:
-    com.customadmindashboard: DEBUG
+    com.customadmindashboard: INFO
