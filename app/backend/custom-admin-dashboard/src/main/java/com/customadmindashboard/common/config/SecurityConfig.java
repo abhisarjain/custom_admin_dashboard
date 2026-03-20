@@ -72,7 +72,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
     CorsConfiguration config = new CorsConfiguration();
     config.addAllowedOrigin("http://localhost:5173");
-    config.addAllowedOrigin("https://custom-admin-dashboard.onrender.com");
+    config.addAllowedOrigin("https://custom-admin-dashboard-mu.vercel.app/");
     config.addAllowedMethod("*");
     config.addAllowedHeader("*");
     config.setAllowCredentials(true);
