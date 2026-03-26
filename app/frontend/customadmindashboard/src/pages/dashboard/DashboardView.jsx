@@ -8,6 +8,10 @@ import api from '../../services/api';
 export default function DashboardView() {
     const { projectId, viewId } = useParams();
     const navigate = useNavigate();
+    const DATA_TYPE_OPTIONS = {
+        postgres: ['TEXT', 'VARCHAR(255)', 'INTEGER', 'BIGINT', 'BOOLEAN', 'DATE', 'TIMESTAMP', 'DECIMAL(10,2)', 'JSONB'],
+        mysql: ['TEXT', 'VARCHAR(255)', 'INT', 'BIGINT', 'BOOLEAN', 'DATE', 'DATETIME', 'DECIMAL(10,2)', 'JSON'],
+    };
 
     const [view, setView] = useState(null);
     const [rows, setRows] = useState([]);
@@ -22,6 +26,9 @@ export default function DashboardView() {
     const [showEditColumnModal, setShowEditColumnModal] = useState(false);
     const [editingColumn, setEditingColumn] = useState(null);
     const [editColumnForm, setEditColumnForm] = useState({ newColumnName: '', dataType: 'TEXT' });
+    const [dbType, setDbType] = useState('postgres');
+    const [primaryKeyColumn, setPrimaryKeyColumn] = useState('id');
+    const [currentTableSchema, setCurrentTableSchema] = useState([]);
 
     useEffect(() => {
         fetchAll();
@@ -29,45 +36,90 @@ export default function DashboardView() {
 
     const fetchAll = async () => {
     try {
-        const [viewsRes, permsRes] = await Promise.all([
+        const [viewsRes, permsRes, connRes] = await Promise.all([
             api.get(`/api/projects/${projectId}/dashboard/views`),
             api.get(`/api/projects/${projectId}/my-permissions`),
+            api.get(`/api/projects/${projectId}/connections`),
         ]);
 
         const foundView = viewsRes.data.data.find(v => v.id === parseInt(viewId));
         setView(foundView);
         setPermissions(permsRes.data.data);
 
-        const tablePerms = permsRes.data.data?.role === 'Super Admin'
+        if (foundView) {
+            const currentConnection = connRes.data.data.find((conn) => conn.id === foundView.dbConnectionId);
+            const nextDbType = currentConnection?.dbType?.toLowerCase() || 'postgres';
+            setDbType(nextDbType);
+
+            const schemaRes = await api.get(`/api/projects/${projectId}/connections/${foundView.dbConnectionId}/schema`);
+            const tableSchema = (schemaRes.data.data || []).find(
+                (item) => item.tableName?.toLowerCase() === foundView.tableName?.toLowerCase()
+            );
+            const tableColumns = tableSchema?.columns || [];
+            setCurrentTableSchema(tableColumns);
+            setPrimaryKeyColumn(
+                tableColumns.find((item) => item.isPrimaryKey || item.primaryKey)?.columnName || 'id'
+            );
+        } else {
+            setCurrentTableSchema([]);
+            setPrimaryKeyColumn('id');
+        }
+
+        const tablePerms = permsRes.data.data?.role === 'Super Admin' || permsRes.data.data?.isOwner
             ? { canViewData: true }
             : (permsRes.data.data?.tablePermissions?.[foundView?.tableName] || {});
 
         if (foundView && (tablePerms.canViewData || tablePerms.canView)) {
-            const dataRes = await api.get(`/api/projects/${projectId}/dashboard/${viewId}/data`);
-            setRows(dataRes.data.data);
+            try {
+                const dataRes = await api.get(`/api/projects/${projectId}/dashboard/${viewId}/data`);
+                setRows(dataRes.data.data);
+            } catch (err) {
+                setRows([]);
+                toast.error(err.response?.data?.message || 'Failed to fetch table data');
+            }
         } else {
             setRows([]);
         }
     } catch (err) {
-        toast.error('Failed to fetch data');
+        toast.error(err.response?.data?.message || 'Failed to fetch data');
     } finally {
         setLoading(false);
     }
-};
+    };
+
+    const resolveRowKey = (row) => {
+        if (!row) return null;
+        if (primaryKeyColumn in row && row[primaryKeyColumn] != null) return row[primaryKeyColumn];
+        const matchedKey = Object.keys(row).find(
+            (key) => key.toLowerCase() === String(primaryKeyColumn).toLowerCase()
+        );
+        if (matchedKey && row[matchedKey] != null) return row[matchedKey];
+        if (row.id != null) return row.id;
+        return null;
+    };
 
     const handleEdit = (row) => {
-        setEditingRow(row.id);
+        const rowKey = resolveRowKey(row);
+        if (rowKey == null) {
+            toast.error('Row identifier not found for update');
+            return;
+        }
+        setEditingRow(rowKey);
         setEditForm({ ...row });
     };
 
     const handleSaveEdit = async () => {
+        if (editingRow == null) {
+            toast.error('Row identifier not found for update');
+            return;
+        }
         try {
             await api.put(`/api/projects/${projectId}/dashboard/${viewId}/data/${editingRow}`, editForm);
             toast.success('Row updated!');
             setEditingRow(null);
             fetchAll();
         } catch (err) {
-            toast.error('Failed to update row');
+            toast.error(err.response?.data?.message || 'Failed to update row');
         }
     };
 
@@ -94,10 +146,12 @@ export default function DashboardView() {
             toast.error('Failed to create row');
         }
     };
+    const getDataTypeOptions = () => DATA_TYPE_OPTIONS[dbType] || DATA_TYPE_OPTIONS.postgres;
+    const getRowKey = (row) => resolveRowKey(row);
     const getTablePerms = (tableName) => permissions?.tablePermissions?.[tableName] || {};
 
     const canViewData = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canViewData !== undefined) return tablePerms.canViewData;
@@ -106,7 +160,7 @@ export default function DashboardView() {
     };
 
     const canViewStructure = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canViewStructure !== undefined) return tablePerms.canViewStructure;
@@ -115,7 +169,7 @@ export default function DashboardView() {
     };
 
     const canEditData = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canEditData !== undefined) return tablePerms.canEditData;
@@ -124,7 +178,7 @@ export default function DashboardView() {
     };
 
     const canCreateData = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canCreateData !== undefined) return tablePerms.canCreateData;
@@ -133,7 +187,7 @@ export default function DashboardView() {
     };
 
     const canCreateStructure = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canCreateStructure !== undefined) return tablePerms.canCreateStructure;
@@ -141,7 +195,7 @@ export default function DashboardView() {
     };
 
     const canDeleteData = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canDeleteData !== undefined) return tablePerms.canDeleteData;
@@ -150,7 +204,7 @@ export default function DashboardView() {
     };
 
     const canEditStructure = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canEditStructure !== undefined) return tablePerms.canEditStructure;
@@ -159,7 +213,7 @@ export default function DashboardView() {
     };
 
     const canDeleteStructure = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canDeleteStructure !== undefined) return tablePerms.canDeleteStructure;
@@ -168,7 +222,7 @@ export default function DashboardView() {
     };
 
     const canDeleteTable = (tableName) => {
-        if (permissions?.role === 'Super Admin') return true;
+        if (permissions?.role === 'Super Admin' || permissions?.isOwner) return true;
         if (!permissions) return false;
         const tablePerms = getTablePerms(tableName);
         if (tablePerms.canDeleteTable !== undefined) return tablePerms.canDeleteTable;
@@ -183,6 +237,14 @@ const canViewColumn = (tableName, columnName) => {
     return true;
 };
 
+    const canCreateColumn = (tableName, columnName) => {
+    if (!permissions) return canCreateData(tableName);
+    const key = `${tableName}.${columnName}`;
+    const colPerm = permissions.columnPermissions[key];
+    if (colPerm && colPerm.canCreate !== undefined) return colPerm.canCreate;
+    return canCreateData(tableName);
+};
+
     const canEditColumn = (tableName, columnName) => {
     if (!permissions) return false;
     const key = `${tableName}.${columnName}`;
@@ -191,10 +253,19 @@ const canViewColumn = (tableName, columnName) => {
     return canEditData(tableName);
 };
 
+    const canDeleteColumn = (tableName, columnName) => {
+    if (!permissions) return canDeleteStructure(tableName);
+    const key = `${tableName}.${columnName}`;
+    const colPerm = permissions.columnPermissions[key];
+    if (colPerm && colPerm.canDelete !== undefined) return colPerm.canDelete;
+    return canDeleteStructure(tableName);
+};
+
     const visibleColumns = view?.columns?.filter(c =>
         c.visible && canViewColumn(view.tableName, c.columnName)
     ) || [];
-    const editableColumns = view?.columns?.filter(c => c.editable && c.columnName !== 'id') || [];
+    const editableColumns = view?.columns?.filter(c => c.editable && c.columnName !== primaryKeyColumn) || [];
+    const creatableColumns = editableColumns.filter((col) => canCreateColumn(view?.tableName, col.columnName));
     const canSeeData = canViewData(view?.tableName);
     const canSeeStructure = canViewStructure(view?.tableName);
 
@@ -223,10 +294,11 @@ const canViewColumn = (tableName, columnName) => {
     };
 
     const openEditColumn = (column) => {
+        const schemaColumn = currentTableSchema.find((item) => item.columnName === column.columnName);
         setEditingColumn(column);
         setEditColumnForm({
             newColumnName: column.columnName,
-            dataType: 'TEXT',
+            dataType: schemaColumn?.dataType || getDataTypeOptions()[0],
         });
         setShowEditColumnModal(true);
     };
@@ -312,7 +384,7 @@ const canViewColumn = (tableName, columnName) => {
                         )}
                     </div>
                     <div className="grid gap-3">
-                        {view?.columns?.map((col) => (
+                        {view?.columns?.filter((col) => canViewColumn(view?.tableName, col.columnName)).map((col) => (
                             <div key={col.id} className="rounded-lg bg-gray-800 px-4 py-3 flex items-center justify-between">
                                 <div>
                                     <p className="text-white text-sm">{col.columnName}</p>
@@ -321,7 +393,7 @@ const canViewColumn = (tableName, columnName) => {
                                     {col.visible && <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Visible</span>}
                                     {col.editable && <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Editable</span>}
                                     {col.deletable && <span className="text-xs bg-red-500/20 text-red-400 px-2 py-1 rounded">Deletable</span>}
-                                    {canEditStructure(view?.tableName) && col.columnName !== 'id' && (
+                                    {canEditStructure(view?.tableName) && canEditColumn(view?.tableName, col.columnName) && col.columnName !== primaryKeyColumn && (
                                         <button
                                             type="button"
                                             onClick={() => openEditColumn(col)}
@@ -330,7 +402,7 @@ const canViewColumn = (tableName, columnName) => {
                                             Edit Column
                                         </button>
                                     )}
-                                    {canDeleteStructure(view?.tableName) && col.columnName !== 'id' && (
+                                    {canDeleteStructure(view?.tableName) && canDeleteColumn(view?.tableName, col.columnName) && col.columnName !== primaryKeyColumn && (
                                         <button
                                             type="button"
                                             onClick={() => handleDeleteColumn(col.columnName)}
@@ -374,12 +446,12 @@ const canViewColumn = (tableName, columnName) => {
                                         </td>
                                     </tr>
                                 ) : (
-                                    rows.map((row) => (
-                                        <tr key={row.id}
+                                    rows.map((row, index) => (
+                                        <tr key={getRowKey(row) ?? index}
                                             className="border-b border-gray-800 hover:bg-gray-800/50 transition">
                                             {visibleColumns.map((col) => (
                                                 <td key={col.columnName} className="px-4 py-3">
-                                                    {editingRow === row.id && canEditColumn(view?.tableName, col.columnName) ? (
+                                                    {editingRow != null && editingRow === getRowKey(row) && canEditColumn(view?.tableName, col.columnName) ? (
                                                         <input
                                                             value={editForm[col.columnName] ?? ''}
                                                             onChange={(e) => setEditForm({ ...editForm, [col.columnName]: e.target.value })}
@@ -392,7 +464,7 @@ const canViewColumn = (tableName, columnName) => {
                                             ))}
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center gap-2">
-                                                    {editingRow === row.id ? (
+                                                    {editingRow != null && editingRow === getRowKey(row) ? (
                                                         <>
                                                             <button onClick={handleSaveEdit}
                                                                 className="text-green-400 hover:text-green-300 transition">
@@ -411,8 +483,8 @@ const canViewColumn = (tableName, columnName) => {
                                                                     <Edit2 size={16} />
                                                                 </button>
                                                             )}
-                                                            {canDeleteData(view?.tableName) && (
-                                                                <button onClick={() => handleDelete(row.id)}
+                                                            {canDeleteData(view?.tableName) && getRowKey(row) != null && (
+                                                                <button onClick={() => handleDelete(getRowKey(row))}
                                                                     className="text-red-400 hover:text-red-300 transition">
                                                                     <Trash2 size={16} />
                                                                 </button>
@@ -440,7 +512,7 @@ const canViewColumn = (tableName, columnName) => {
                     <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
                         <h2 className="text-white font-semibold text-lg mb-5">Add New Row</h2>
                         <form onSubmit={handleCreate} className="space-y-4">
-                            {editableColumns.map((col) => (
+                            {creatableColumns.map((col) => (
                                 <div key={col.columnName}>
                                     <label className="text-sm text-gray-400 mb-1 block">
                                         {col.columnName}
@@ -487,13 +559,16 @@ const canViewColumn = (tableName, columnName) => {
                             </div>
                             <div>
                                 <label className="text-sm text-gray-400 mb-1 block">Data Type</label>
-                                <input
+                                <select
                                     value={columnForm.dataType}
                                     onChange={(e) => setColumnForm({ ...columnForm, dataType: e.target.value })}
                                     className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-700 focus:border-indigo-500 focus:outline-none"
-                                    placeholder="TEXT"
                                     required
-                                />
+                                >
+                                    {getDataTypeOptions().map((type) => (
+                                        <option key={type} value={type}>{type}</option>
+                                    ))}
+                                </select>
                             </div>
                             <div className="flex gap-3 pt-2">
                                 <button type="button" onClick={() => setShowAddColumnModal(false)}
@@ -526,12 +601,16 @@ const canViewColumn = (tableName, columnName) => {
                             </div>
                             <div>
                                 <label className="text-sm text-gray-400 mb-1 block">Data Type</label>
-                                <input
+                                <select
                                     value={editColumnForm.dataType}
                                     onChange={(e) => setEditColumnForm({ ...editColumnForm, dataType: e.target.value })}
                                     className="w-full bg-gray-800 text-white rounded-lg px-4 py-3 border border-gray-700 focus:border-indigo-500 focus:outline-none"
                                     required
-                                />
+                                >
+                                    {getDataTypeOptions().map((type) => (
+                                        <option key={type} value={type}>{type}</option>
+                                    ))}
+                                </select>
                             </div>
                             <div className="flex gap-3 pt-2">
                                 <button type="button" onClick={() => setShowEditColumnModal(false)}

@@ -1,5 +1,6 @@
 package com.customadmindashboard.rbac.service;
 
+import com.customadmindashboard.audit.service.AuditService;
 import com.customadmindashboard.auth.entity.Tenant;
 import com.customadmindashboard.auth.repository.InvitationRepository;
 import com.customadmindashboard.common.exception.BadRequestException;
@@ -18,6 +19,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -32,30 +35,63 @@ public class RoleService {
     private final ProjectMemberRepository projectMemberRepository;
     private final RoleMemberPermissionRepository roleMemberPermissionRepository;
     private final InvitationRepository invitationRepository;
+    private final AuditService auditService;
 // Role permissions get karo
 public RolePermission getRolePermissions(Long roleId) {
     return rolePermissionRepository.findByRoleId(roleId)
             .orElse(RolePermission.builder()
                     .canView(false).canCreate(false)
                     .canEdit(false).canDelete(false)
+                    .canViewAuditLogs(false)
                     .build());
 }
 
 // Role permissions set karo
 @Transactional
-public void setRolePermissions(Long roleId, RolePermission request) {
+public void setRolePermissions(Long roleId, RolePermission request, Tenant tenant) {
     Role role = roleRepository.findById(roleId)
             .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
+    boolean isOwner = role.getProject().getTenant().getId().equals(tenant.getId());
 
     RolePermission permission = rolePermissionRepository.findByRoleId(roleId)
             .orElse(RolePermission.builder().role(role).build());
+
+    Map<String, Object> previousRolePermissionState = new LinkedHashMap<>();
+    previousRolePermissionState.put("roleName", role.getName());
+    previousRolePermissionState.put("canView", permission.isCanView());
+    previousRolePermissionState.put("canCreate", permission.isCanCreate());
+    previousRolePermissionState.put("canEdit", permission.isCanEdit());
+    previousRolePermissionState.put("canDelete", permission.isCanDelete());
+    previousRolePermissionState.put("canViewAuditLogs", permission.isCanViewAuditLogs());
+
+    if (!isOwner && permission.isCanViewAuditLogs() != request.isCanViewAuditLogs()) {
+        throw new BadRequestException("Only the project owner can manage audit log access");
+    }
 
     permission.setCanView(request.isCanView());
     permission.setCanCreate(request.isCanCreate());
     permission.setCanEdit(request.isCanEdit());
     permission.setCanDelete(request.isCanDelete());
+    permission.setCanViewAuditLogs(request.isCanViewAuditLogs());
 
     rolePermissionRepository.save(permission);
+
+    Map<String, Object> rolePermissionState = new LinkedHashMap<>();
+    rolePermissionState.put("roleName", role.getName());
+    rolePermissionState.put("canView", permission.isCanView());
+    rolePermissionState.put("canCreate", permission.isCanCreate());
+    rolePermissionState.put("canEdit", permission.isCanEdit());
+    rolePermissionState.put("canDelete", permission.isCanDelete());
+    rolePermissionState.put("canViewAuditLogs", permission.isCanViewAuditLogs());
+    auditService.publish(
+            tenant,
+            role.getProject(),
+            "ROLE_PERMISSION_UPDATED",
+            null,
+            String.valueOf(roleId),
+            previousRolePermissionState,
+            rolePermissionState
+    );
 }
 
 // Member permissions get karo
@@ -98,6 +134,14 @@ public RoleResponse updateRole(Long roleId, CreateRoleRequest request, Tenant te
         throw new BadRequestException("Role with this name already exists");
     }
 
+    Map<String, Object> previousRoleState = new LinkedHashMap<>();
+    previousRoleState.put("roleName", role.getName());
+    previousRoleState.put("canGrantView", role.isCanGrantView());
+    previousRoleState.put("canGrantCreate", role.isCanGrantCreate());
+    previousRoleState.put("canGrantEdit", role.isCanGrantEdit());
+    previousRoleState.put("canGrantDelete", role.isCanGrantDelete());
+    previousRoleState.put("canGrantDelegate", role.isCanGrantDelegate());
+
     role.setName(nextName);
     role.setCanGrantView(request.isCanGrantView());
     role.setCanGrantCreate(request.isCanGrantCreate());
@@ -106,6 +150,22 @@ public RoleResponse updateRole(Long roleId, CreateRoleRequest request, Tenant te
     role.setCanGrantDelegate(request.isCanGrantDelegate());
 
     role = roleRepository.save(role);
+    Map<String, Object> nextRoleState = new LinkedHashMap<>();
+    nextRoleState.put("roleName", role.getName());
+    nextRoleState.put("canGrantView", role.isCanGrantView());
+    nextRoleState.put("canGrantCreate", role.isCanGrantCreate());
+    nextRoleState.put("canGrantEdit", role.isCanGrantEdit());
+    nextRoleState.put("canGrantDelete", role.isCanGrantDelete());
+    nextRoleState.put("canGrantDelegate", role.isCanGrantDelegate());
+    auditService.publish(
+            tenant,
+            project,
+            "ROLE_UPDATED",
+            null,
+            String.valueOf(role.getId()),
+            previousRoleState,
+            nextRoleState
+    );
     return mapToResponse(role);
 }
 
@@ -148,17 +208,40 @@ public RoleResponse updateRole(Long roleId, CreateRoleRequest request, Tenant te
         roleMemberPermissionRepository.deleteByRoleId(roleId);
         rolePermissionRepository.deleteByRoleId(roleId);
         invitationRepository.deleteAllByRoleId(roleId);
+        Map<String, Object> deletedRole = new LinkedHashMap<>();
+        deletedRole.put("roleName", role.getName());
+        auditService.publish(
+                tenant,
+                project,
+                "ROLE_DELETED",
+                null,
+                String.valueOf(roleId),
+                deletedRole,
+                null
+        );
         roleRepository.delete(role);
     }
 
 // Member permissions set karo
 @Transactional
-public void setMemberPermissions(Long roleId, RoleMemberPermission request) {
+public void setMemberPermissions(Long roleId, RoleMemberPermission request, Tenant tenant) {
     Role role = roleRepository.findById(roleId)
             .orElseThrow(() -> new ResourceNotFoundException("Role not found"));
 
     RoleMemberPermission permission = roleMemberPermissionRepository.findByRoleId(roleId)
             .orElse(RoleMemberPermission.builder().role(role).build());
+
+    Map<String, Object> previousMemberPermissionState = new LinkedHashMap<>();
+    previousMemberPermissionState.put("roleName", role.getName());
+    previousMemberPermissionState.put("canInvite", permission.isCanInvite());
+    previousMemberPermissionState.put("canView", permission.isCanView());
+    previousMemberPermissionState.put("canEdit", permission.isCanEdit());
+    previousMemberPermissionState.put("canRemove", permission.isCanRemove());
+    previousMemberPermissionState.put("grantInvite", permission.isGrantInvite());
+    previousMemberPermissionState.put("grantView", permission.isGrantView());
+    previousMemberPermissionState.put("grantEdit", permission.isGrantEdit());
+    previousMemberPermissionState.put("grantRemove", permission.isGrantRemove());
+    previousMemberPermissionState.put("grantDelegate", permission.isGrantDelegate());
 
     permission.setCanInvite(request.isCanInvite());
     permission.setCanView(request.isCanView());
@@ -171,6 +254,27 @@ public void setMemberPermissions(Long roleId, RoleMemberPermission request) {
     permission.setGrantDelegate(request.isGrantDelegate());
 
     roleMemberPermissionRepository.save(permission);
+
+    Map<String, Object> memberPermissionState = new LinkedHashMap<>();
+    memberPermissionState.put("roleName", role.getName());
+    memberPermissionState.put("canInvite", permission.isCanInvite());
+    memberPermissionState.put("canView", permission.isCanView());
+    memberPermissionState.put("canEdit", permission.isCanEdit());
+    memberPermissionState.put("canRemove", permission.isCanRemove());
+    memberPermissionState.put("grantInvite", permission.isGrantInvite());
+    memberPermissionState.put("grantView", permission.isGrantView());
+    memberPermissionState.put("grantEdit", permission.isGrantEdit());
+    memberPermissionState.put("grantRemove", permission.isGrantRemove());
+    memberPermissionState.put("grantDelegate", permission.isGrantDelegate());
+    auditService.publish(
+            tenant,
+            role.getProject(),
+            "MEMBER_PERMISSION_UPDATED",
+            null,
+            String.valueOf(roleId),
+            previousMemberPermissionState,
+            memberPermissionState
+    );
 }
     // Role banao
     @Transactional
@@ -219,9 +323,27 @@ public void setMemberPermissions(Long roleId, RoleMemberPermission request) {
                 .canCreate(false)
                 .canEdit(false)
                 .canDelete(false)
+                .canViewAuditLogs(false)
                 .build();
 
         rolePermissionRepository.save(permission);
+
+        Map<String, Object> createdRole = new LinkedHashMap<>();
+        createdRole.put("roleName", role.getName());
+        createdRole.put("canGrantView", role.isCanGrantView());
+        createdRole.put("canGrantCreate", role.isCanGrantCreate());
+        createdRole.put("canGrantEdit", role.isCanGrantEdit());
+        createdRole.put("canGrantDelete", role.isCanGrantDelete());
+        createdRole.put("canGrantDelegate", role.isCanGrantDelegate());
+        auditService.publish(
+                tenant,
+                project,
+                "ROLE_CREATED",
+                null,
+                String.valueOf(role.getId()),
+                null,
+                createdRole
+        );
 
         return mapToResponse(role);
     }
@@ -252,6 +374,19 @@ public void setMemberPermissions(Long roleId, RoleMemberPermission request) {
                         .role(role)
                         .tableName(request.getTableName())
                         .build());
+
+        Map<String, Object> previousTablePermissionState = new LinkedHashMap<>();
+        previousTablePermissionState.put("roleName", role.getName());
+        previousTablePermissionState.put("canViewData", permission.isCanViewData());
+        previousTablePermissionState.put("canViewStructure", permission.isCanViewStructure());
+        previousTablePermissionState.put("canCreateData", permission.isCanCreateData());
+        previousTablePermissionState.put("canCreateStructure", permission.isCanCreateStructure());
+        previousTablePermissionState.put("canEditData", permission.isCanEditData());
+        previousTablePermissionState.put("canEditStructure", permission.isCanEditStructure());
+        previousTablePermissionState.put("canDeleteData", permission.isCanDeleteData());
+        previousTablePermissionState.put("canDeleteStructure", permission.isCanDeleteStructure());
+        previousTablePermissionState.put("canDeleteTable", permission.isCanDeleteTable());
+        previousTablePermissionState.put("canGrantDelegate", permission.isCanGrantDelegate());
 
         boolean canCreateData = request.isCanCreateData() || request.isCanCreate();
         boolean canCreateStructure = request.isCanCreateStructure();
@@ -284,6 +419,28 @@ public void setMemberPermissions(Long roleId, RoleMemberPermission request) {
         permission.setCanGrantDelegate(request.isCanGrantDelegate());
 
         roleTablePermissionRepository.save(permission);
+
+        Map<String, Object> tablePermissionState = new LinkedHashMap<>();
+        tablePermissionState.put("roleName", role.getName());
+        tablePermissionState.put("canViewData", permission.isCanViewData());
+        tablePermissionState.put("canViewStructure", permission.isCanViewStructure());
+        tablePermissionState.put("canCreateData", permission.isCanCreateData());
+        tablePermissionState.put("canCreateStructure", permission.isCanCreateStructure());
+        tablePermissionState.put("canEditData", permission.isCanEditData());
+        tablePermissionState.put("canEditStructure", permission.isCanEditStructure());
+        tablePermissionState.put("canDeleteData", permission.isCanDeleteData());
+        tablePermissionState.put("canDeleteStructure", permission.isCanDeleteStructure());
+        tablePermissionState.put("canDeleteTable", permission.isCanDeleteTable());
+        tablePermissionState.put("canGrantDelegate", permission.isCanGrantDelegate());
+        auditService.publish(
+                tenant,
+                role.getProject(),
+                "TABLE_PERMISSION_UPDATED",
+                request.getTableName(),
+                String.valueOf(roleId),
+                previousTablePermissionState,
+                tablePermissionState
+        );
     }
 
     // Column level permissions set karo
@@ -297,18 +454,55 @@ public void setMemberPermissions(Long roleId, RoleMemberPermission request) {
             throw new BadRequestException("Column name is required");
         }
 
-        RoleColumnPermission permission = roleColumnPermissionRepository
-                .findByRoleIdAndTableNameAndColumnName(roleId, request.getTableName(), request.getColumnName())
+        List<RoleColumnPermission> existingPermissions = roleColumnPermissionRepository
+                .findAllByRoleIdAndTableNameAndColumnName(roleId, request.getTableName(), request.getColumnName());
+
+        RoleColumnPermission permission = existingPermissions.stream().findFirst()
                 .orElse(RoleColumnPermission.builder()
                         .role(role)
                         .tableName(request.getTableName())
                         .columnName(request.getColumnName())
                         .build());
 
-        permission.setCanView(request.isCanView());
-        permission.setCanEdit(request.isCanEdit());
+        Map<String, Object> previousColumnPermissionState = new LinkedHashMap<>();
+        previousColumnPermissionState.put("roleName", role.getName());
+        previousColumnPermissionState.put("columnName", request.getColumnName());
+        previousColumnPermissionState.put("canView", permission.isCanView());
+        previousColumnPermissionState.put("canCreate", permission.isCanCreate());
+        previousColumnPermissionState.put("canEdit", permission.isCanEdit());
+        previousColumnPermissionState.put("canDelete", permission.isCanDelete());
 
-        roleColumnPermissionRepository.save(permission);
+        if (existingPermissions.size() > 1) {
+            roleColumnPermissionRepository.deleteAll(
+                    existingPermissions.subList(1, existingPermissions.size())
+            );
+        }
+
+        permission.setCanView(request.isCanView());
+        permission.setCanCreate(request.isCanCreate());
+        permission.setCanEdit(request.isCanEdit());
+        permission.setCanDelete(request.isCanDelete());
+        permission.setCanGrantView(false);
+        permission.setCanGrantEdit(false);
+
+        roleColumnPermissionRepository.saveAndFlush(permission);
+
+        Map<String, Object> columnPermissionState = new LinkedHashMap<>();
+        columnPermissionState.put("roleName", role.getName());
+        columnPermissionState.put("columnName", request.getColumnName());
+        columnPermissionState.put("canView", permission.isCanView());
+        columnPermissionState.put("canCreate", permission.isCanCreate());
+        columnPermissionState.put("canEdit", permission.isCanEdit());
+        columnPermissionState.put("canDelete", permission.isCanDelete());
+        auditService.publish(
+                tenant,
+                role.getProject(),
+                "COLUMN_PERMISSION_UPDATED",
+                request.getTableName(),
+                String.valueOf(roleId),
+                previousColumnPermissionState,
+                columnPermissionState
+        );
     }
 
     private RoleResponse mapToResponse(Role role) {

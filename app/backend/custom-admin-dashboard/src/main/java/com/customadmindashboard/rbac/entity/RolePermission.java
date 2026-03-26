@@ -36,6 +36,9 @@ public class RolePermission {
     @Column(name = "can_delete", nullable = false)
     private boolean canDelete = false;
 
+    @Column(name = "can_view_audit_logs", nullable = false, columnDefinition = "BOOLEAN NOT NULL DEFAULT FALSE")
+    private boolean canViewAuditLogs = false;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 

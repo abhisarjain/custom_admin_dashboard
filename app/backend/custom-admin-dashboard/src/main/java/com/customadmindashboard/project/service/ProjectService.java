@@ -1,6 +1,7 @@
 package com.customadmindashboard.project.service;
 
 import com.customadmindashboard.audit.repository.AuditLogRepository;
+import com.customadmindashboard.audit.service.AuditService;
 import com.customadmindashboard.auth.repository.ApiTokenRepository;
 import com.customadmindashboard.auth.repository.InvitationRepository;
 import com.customadmindashboard.auth.entity.Tenant;
@@ -58,6 +59,7 @@ public class ProjectService {
     private final InvitationRepository invitationRepository;
     private final ApiTokenRepository apiTokenRepository;
     private final AuditLogRepository auditLogRepository;
+    private final AuditService auditService;
     private final DashboardViewRepository dashboardViewRepository;
     private final DashboardColumnRepository dashboardColumnRepository;
     private final DbConnectionRepository dbConnectionRepository;
@@ -104,6 +106,7 @@ private final RoleColumnPermissionRepository roleColumnPermissionRepository;
                 .canCreate(true)
                 .canEdit(true)
                 .canDelete(true)
+                .canViewAuditLogs(true)
                 .build());
 
         roleMemberPermissionRepository.save(RoleMemberPermission.builder()
@@ -150,6 +153,20 @@ private final RoleColumnPermissionRepository roleColumnPermissionRepository;
                 .build();
 
         projectMemberRepository.save(member);
+
+        Map<String, Object> projectSnapshot = new HashMap<>();
+        projectSnapshot.put("name", project.getName());
+        projectSnapshot.put("description", project.getDescription());
+        projectSnapshot.put("ownerEmail", tenant.getEmail());
+        auditService.publish(
+                tenant,
+                project,
+                "PROJECT_CREATED",
+                null,
+                String.valueOf(project.getId()),
+                null,
+                projectSnapshot
+        );
 
         return mapToResponse(project);
     }
@@ -282,8 +299,28 @@ public List<Map<String, Object>> getMembers(Long projectId, Tenant tenant) {
             throw new BadRequestException("Role does not belong to this project");
         }
 
+        String previousRoleName = member.getRole().getName();
         member.setRole(nextRole);
         projectMemberRepository.save(member);
+
+        Map<String, Object> oldValue = new HashMap<>();
+        oldValue.put("memberEmail", member.getTenant().getEmail());
+        oldValue.put("role", previousRoleName);
+
+        Map<String, Object> newValue = new HashMap<>();
+        newValue.put("memberEmail", member.getTenant().getEmail());
+        newValue.put("role", nextRole.getName());
+
+        auditService.publish(
+                tenant,
+                project,
+                "MEMBER_ROLE_UPDATED",
+                null,
+                String.valueOf(member.getId()),
+                oldValue,
+                newValue
+        );
+
     }
 
     @Transactional
@@ -319,7 +356,19 @@ public List<Map<String, Object>> getMembers(Long projectId, Tenant tenant) {
             throw new BadRequestException("Project owner cannot be removed");
         }
 
+        Map<String, Object> removedMember = new HashMap<>();
+        removedMember.put("memberEmail", member.getTenant().getEmail());
+        removedMember.put("role", member.getRole().getName());
         projectMemberRepository.delete(member);
+        auditService.publish(
+                tenant,
+                project,
+                "MEMBER_REMOVED",
+                null,
+                String.valueOf(memberId),
+                removedMember,
+                null
+        );
     }
     
 
@@ -375,22 +424,43 @@ public List<Map<String, Object>> getMembers(Long projectId, Tenant tenant) {
     }
 
 
-    public Map<String, Object> getMyPermissions(Long projectId, Tenant tenant) {
-        
-    // Member dhundo
+public Map<String, Object> getMyPermissions(Long projectId, Tenant tenant) {
+    Project project = projectRepository.findById(projectId)
+            .orElseThrow(() -> new ResourceNotFoundException("Project not found"));
+    boolean isOwner = project.getTenant().getId().equals(tenant.getId());
+
     ProjectMember member = projectMemberRepository
             .findByProjectIdAndTenantId(projectId, tenant.getId())
-            .orElseThrow(() -> new ResourceNotFoundException("Not a member of this project"));
+            .orElse(null);
 
-    Role role = member.getRole();
+    Role role;
+    if (member != null) {
+        role = member.getRole();
+    } else if (isOwner) {
+        role = roleRepository.findByNameAndProjectId("Super Admin", projectId)
+                .orElseGet(() -> Role.builder()
+                        .id(null)
+                        .project(project)
+                        .name("Super Admin")
+                        .canGrantView(true)
+                        .canGrantCreate(true)
+                        .canGrantEdit(true)
+                        .canGrantDelete(true)
+                        .canGrantDelegate(true)
+                        .build());
+    } else {
+        throw new ResourceNotFoundException("Not a member of this project");
+    }
 
     // Table permissions
-    List<RoleTablePermission> tablePerms = roleTablePermissionRepository
-            .findAllByRoleId(role.getId());
+    List<RoleTablePermission> tablePerms = role.getId() == null
+            ? List.of()
+            : roleTablePermissionRepository.findAllByRoleId(role.getId());
 
     // Column permissions
-    List<RoleColumnPermission> columnPerms = roleColumnPermissionRepository
-            .findAllByRoleId(role.getId());
+    List<RoleColumnPermission> columnPerms = role.getId() == null
+            ? List.of()
+            : roleColumnPermissionRepository.findAllByRoleId(role.getId());
 
     // Default permissions
     Map<String, Object> defaultPerms = new HashMap<>();
@@ -437,7 +507,9 @@ public List<Map<String, Object>> getMembers(Long projectId, Tenant tenant) {
         String key = p.getTableName() + "." + p.getColumnName();
         Map<String, Boolean> perms = new HashMap<>();
         perms.put("canView", p.isCanView());
+        perms.put("canCreate", p.isCanCreate());
         perms.put("canEdit", p.isCanEdit());
+        perms.put("canDelete", p.isCanDelete());
         columnPermMap.put(key, perms);
     });
     // Grant permissions bhi add karo
@@ -451,6 +523,7 @@ grantPermissions.put("canGrantDelegate", role.isCanGrantDelegate());
 
 
     Map<String, Object> result = new HashMap<>();
+    result.put("isOwner", isOwner);
     result.put("role", role.getName());
     result.put("roleId", role.getId());
     result.put("defaultPermissions", defaultPerms);
@@ -458,8 +531,20 @@ grantPermissions.put("canGrantDelegate", role.isCanGrantDelegate());
     result.put("columnPermissions", columnPermMap);
     result.put("grantPermissions", grantPermissions);
 
-    RoleMemberPermission memberPermission = roleMemberPermissionRepository.findByRoleId(role.getId())
-            .orElse(RoleMemberPermission.builder().build());
+    RoleMemberPermission memberPermission = role.getId() == null
+            ? RoleMemberPermission.builder()
+                .canInvite(true)
+                .canView(true)
+                .canEdit(true)
+                .canRemove(true)
+                .grantInvite(true)
+                .grantView(true)
+                .grantEdit(true)
+                .grantRemove(true)
+                .grantDelegate(true)
+                .build()
+            : roleMemberPermissionRepository.findByRoleId(role.getId())
+                .orElse(RoleMemberPermission.builder().build());
     Map<String, Object> memberPermissions = new HashMap<>();
     memberPermissions.put("canInvite", memberPermission.isCanInvite());
     memberPermissions.put("canView", memberPermission.isCanView());

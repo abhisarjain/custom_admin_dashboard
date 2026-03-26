@@ -1,5 +1,6 @@
 package com.customadmindashboard.database.service;
 
+import com.customadmindashboard.audit.service.AuditService;
 import com.customadmindashboard.auth.entity.Tenant;
 import com.customadmindashboard.common.exception.BadRequestException;
 import com.customadmindashboard.common.exception.ResourceNotFoundException;
@@ -33,6 +34,7 @@ public class DbConnectionService {
     private final DbSchemaRepository dbSchemaRepository;
     private final DbSyncLogRepository dbSyncLogRepository;
     private final ProjectRepository projectRepository;
+    private final AuditService auditService;
 
     // DB Connection save karo
     @Transactional
@@ -69,6 +71,22 @@ public class DbConnectionService {
         if (!connected) {
             throw new BadRequestException("Could not connect to database — check credentials");
         }
+
+        Map<String, Object> connectionState = new LinkedHashMap<>();
+        connectionState.put("dbType", connection.getDbType());
+        connectionState.put("host", connection.getHost());
+        connectionState.put("port", connection.getPort());
+        connectionState.put("databaseName", connection.getDatabaseName());
+        connectionState.put("status", connection.getStatus());
+        auditService.publish(
+                tenant,
+                project,
+                "CONNECTION_CREATED",
+                null,
+                String.valueOf(connection.getId()),
+                null,
+                connectionState
+        );
 
         return mapToResponse(connection);
     }
@@ -120,6 +138,20 @@ public class DbConnectionService {
         if (errorMessage != null) {
             throw new BadRequestException("Schema sync failed: " + errorMessage);
         }
+
+        Map<String, Object> syncState = new LinkedHashMap<>();
+        syncState.put("connectionId", connectionId);
+        syncState.put("tablesDetected", tablesDetected);
+        syncState.put("status", "success");
+        auditService.publish(
+                tenant,
+                connection.getProject(),
+                "SCHEMA_SYNCED",
+                null,
+                String.valueOf(connectionId),
+                null,
+                syncState
+        );
 
         // Response banao
         return buildSchemaResponse(connectionId);

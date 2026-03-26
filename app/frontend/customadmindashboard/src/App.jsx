@@ -5,9 +5,12 @@ import ProjectDetail from './pages/project/ProjectDetail';
 import Login from './pages/auth/Login';
 import Register from './pages/auth/Register';
 import Dashboard from './pages/dashboard/Dashboard';
+import DashboardSettings from './pages/dashboard/DashboardSettings';
 import Projects from './pages/project/Projects';
 import RoleDetail from './pages/rbac/RoleDetail';
 import DashboardView from './pages/dashboard/DashboardView';
+import Invitations from './pages/invitation/Invitations';
+import AuditLogs from './pages/audit/AuditLogs';
 const PrivateRoute = ({ children }) => {
   const { tenant, loading } = useAuth();
   if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
@@ -29,7 +32,10 @@ export default function App() {
 
       {/* Private routes */}
       <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+      <Route path="/dashboard/settings" element={<PrivateRoute><DashboardSettings /></PrivateRoute>} />
       <Route path="/projects" element={<PrivateRoute><Projects /></PrivateRoute>} />
+      <Route path="/invitations" element={<PrivateRoute><Invitations /></PrivateRoute>} />
+      <Route path="/audit" element={<PrivateRoute><AuditLogs /></PrivateRoute>} />
 
       {/* Default */}
       <Route path="/" element={<Navigate to="/dashboard" />} />

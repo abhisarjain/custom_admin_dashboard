@@ -166,7 +166,7 @@ const fetchAll = async () => {
   const canInviteMembers = memberAccess.canInvite;
   const canRemoveMembers = memberAccess.canRemove || myPermissions?.role === 'Super Admin';
   const getTableAccess = (tableName) => {
-    if (myPermissions?.role === 'Super Admin') {
+    if (myPermissions?.role === 'Super Admin' || myPermissions?.isOwner) {
       return {
         canViewData: true,
         canViewStructure: true,
@@ -194,7 +194,7 @@ const fetchAll = async () => {
       canDeleteTable: perm.canDeleteTable || false,
     };
   };
-  const canCreateNewTable = !!myPermissions?.tablePermissions?.['__new_table__']?.canCreate || myPermissions?.role === 'Super Admin';
+  const canCreateNewTable = !!myPermissions?.tablePermissions?.['__new_table__']?.canCreate || myPermissions?.role === 'Super Admin' || myPermissions?.isOwner;
   const hasAnyTableAccess = schema.some((table) => {
     const access = getTableAccess(table.tableName);
     return Object.values(access).some(Boolean);
@@ -391,8 +391,8 @@ const fetchAll = async () => {
     setShowMemberRoleModal(true);
   };
 
-  const openTableView = async (tableName) => {
-    const access = getTableAccess(tableName);
+  const openTableView = async (tableName, accessOverride = null) => {
+    const access = accessOverride || getTableAccess(tableName);
     if (!access.canViewData && !access.canViewStructure) {
       toast.error('You do not have access to this table');
       return;
@@ -431,15 +431,29 @@ const fetchAll = async () => {
     }
 
     try {
+      const createdTableName = newTableForm.tableName;
       await api.post(`/api/projects/${projectId}/dashboard/tables`, newTableForm);
-      if (connections[0]) {
-        await api.post(`/api/projects/${projectId}/connections/${connections[0].id}/sync`);
-      }
-      toast.success('Table created!');
       setShowCreateTableModal(false);
       setNewTableForm({ tableName: '' });
-      await fetchAll();
-      await openTableView(newTableForm.tableName);
+      toast.success('Table created!');
+
+      try {
+        await fetchAll();
+      } catch {
+        toast.error('Table was created, but schema refresh failed');
+        return;
+      }
+
+      try {
+        await openTableView(createdTableName, {
+          canViewData: true,
+          canViewStructure: true,
+          canCreateData: true,
+          canDeleteData: true,
+        });
+      } catch {
+        toast.error('Table was created, but opening it failed');
+      }
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to create table');
     }

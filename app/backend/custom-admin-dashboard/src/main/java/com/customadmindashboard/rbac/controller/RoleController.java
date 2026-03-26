@@ -100,7 +100,7 @@ public ResponseEntity<ApiResponse<Void>> setRolePermissions(
         @PathVariable Long roleId,
         @RequestBody RolePermission request,
         @AuthenticationPrincipal Tenant tenant) {
-    roleService.setRolePermissions(roleId, request);
+    roleService.setRolePermissions(roleId, request, tenant);
     return ResponseEntity.ok(ApiResponse.success(null, "Role permissions saved!"));
 }
 
@@ -119,7 +119,7 @@ public ResponseEntity<ApiResponse<Void>> setMemberPermissions(
         @PathVariable Long roleId,
         @RequestBody RoleMemberPermission request,
         @AuthenticationPrincipal Tenant tenant) {
-    roleService.setMemberPermissions(roleId, request);
+    roleService.setMemberPermissions(roleId, request, tenant);
     return ResponseEntity.ok(ApiResponse.success(null, "Member permissions saved!"));
 }
 @PutMapping("/{roleId}")

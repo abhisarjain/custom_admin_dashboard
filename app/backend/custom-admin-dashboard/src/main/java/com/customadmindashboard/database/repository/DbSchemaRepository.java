@@ -10,4 +10,5 @@ public interface DbSchemaRepository extends JpaRepository<DbSchema, Long> {
     List<DbSchema> findAllByDbConnectionId(Long dbConnectionId);
     List<DbSchema> findAllByDbConnectionIdAndTableName(Long dbConnectionId, String tableName);
     void deleteAllByDbConnectionId(Long dbConnectionId);
+    void deleteAllByDbConnectionIdAndTableName(Long dbConnectionId, String tableName);
 }

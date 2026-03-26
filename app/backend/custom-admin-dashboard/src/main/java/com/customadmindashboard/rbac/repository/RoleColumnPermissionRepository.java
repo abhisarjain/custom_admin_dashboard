@@ -10,6 +10,8 @@ import java.util.Optional;
 public interface RoleColumnPermissionRepository extends JpaRepository<RoleColumnPermission, Long> {
     List<RoleColumnPermission> findAllByRoleId(Long roleId);
     List<RoleColumnPermission> findAllByRoleIdAndTableName(Long roleId, String tableName);
+    List<RoleColumnPermission> findAllByRoleIdAndTableNameAndColumnName(Long roleId, String tableName, String columnName);
     Optional<RoleColumnPermission> findByRoleIdAndTableNameAndColumnName(Long roleId, String tableName, String columnName);
     void deleteByRoleId(Long roleId);
+    void deleteAllByRoleIdAndTableNameAndColumnName(Long roleId, String tableName, String columnName);
 }

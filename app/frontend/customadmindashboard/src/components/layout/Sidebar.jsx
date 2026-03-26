@@ -3,8 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import {
   LayoutDashboard,
   FolderKanban,
-  Database,
-  Shield,
+  Bell,
+  History,
   LogOut,
   ChevronRight
 } from 'lucide-react';
@@ -12,8 +12,8 @@ import {
 const navItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/projects', icon: FolderKanban, label: 'Projects' },
-  { path: '/connections', icon: Database, label: 'Connections' },
-  { path: '/roles', icon: Shield, label: 'Roles & Permissions' },
+  { path: '/invitations', icon: Bell, label: 'Invitations' },
+  { path: '/audit', icon: History, label: 'Audit Logs' },
 ];
 
 export default function Sidebar() {
@@ -41,7 +41,7 @@ export default function Sidebar() {
       <nav className="flex-1 p-4 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = location.pathname === item.path;
+          const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
           return (
             <Link
               key={item.path}

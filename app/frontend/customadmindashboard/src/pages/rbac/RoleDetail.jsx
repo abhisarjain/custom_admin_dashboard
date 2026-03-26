@@ -60,7 +60,7 @@ export default function RoleDetail() {
 
     // Role permissions
     const [rolePerms, setRolePerms] = useState({
-        canView: false, canCreate: false, canEdit: false, canDelete: false,
+        canView: false, canCreate: false, canEdit: false, canDelete: false, canViewAuditLogs: false,
     });
 
     // Grant permissions (from roles table)
@@ -76,7 +76,9 @@ export default function RoleDetail() {
     });
     const [tables, setTables] = useState([]);
     const [tablePerms, setTablePerms] = useState({});
+    const [columnPerms, setColumnPerms] = useState({});
     const [myTablePerms, setMyTablePerms] = useState({});
+    const [openColumnTables, setOpenColumnTables] = useState({});
     const [openGroups, setOpenGroups] = useState({
         canView: true,
         canCreate: false,
@@ -148,14 +150,25 @@ export default function RoleDetail() {
         return acc;
     }, {});
 
+    const mapColumnPermList = (list = []) => list.reduce((acc, item) => {
+        acc[`${item.tableName}.${item.columnName}`] = {
+            canView: item.canView || false,
+            canCreate: item.canCreate || false,
+            canEdit: item.canEdit || false,
+            canDelete: item.canDelete || false,
+        };
+        return acc;
+    }, {});
+
     const fetchAll = async () => {
         try {
-            const [rolesRes, rolePermsRes, memberPermsRes, myPermsRes, tablePermsRes, connRes] = await Promise.all([
+            const [rolesRes, rolePermsRes, memberPermsRes, myPermsRes, tablePermsRes, columnPermsRes, connRes] = await Promise.all([
                 api.get(`/api/projects/${projectId}/roles`),
                 api.get(`/api/projects/${projectId}/roles/${roleId}/permissions`),
                 api.get(`/api/projects/${projectId}/roles/${roleId}/member-permissions`),
                 api.get(`/api/projects/${projectId}/my-permissions`),
                 api.get(`/api/projects/${projectId}/roles/${roleId}/table-permissions`),
+                api.get(`/api/projects/${projectId}/roles/${roleId}/column-permissions`),
                 api.get(`/api/projects/${projectId}/connections`),
             ]);
 
@@ -211,6 +224,7 @@ export default function RoleDetail() {
                 canCreate: isTargetSuperAdmin ? true : (rp.canCreate || false),
                 canEdit: isTargetSuperAdmin ? true : (rp.canEdit || false),
                 canDelete: isTargetSuperAdmin ? true : (rp.canDelete || false),
+                canViewAuditLogs: rp.canViewAuditLogs || false,
             });
 
             // Member permissions
@@ -227,6 +241,7 @@ export default function RoleDetail() {
                 grantDelegate: isTargetSuperAdmin ? true : (mp.grantDelegate || false),
             });
             setTablePerms(mapTablePermList(tablePermsRes.data.data));
+            setColumnPerms(mapColumnPermList(columnPermsRes.data.data));
 
             if (connRes.data.data.length > 0) {
                 const schemaRes = await api.get(`/api/projects/${projectId}/connections/${connRes.data.data[0].id}/schema`);
@@ -312,6 +327,8 @@ export default function RoleDetail() {
         }
     };
 
+    const canManageAuditLogAccess = !!myRole?.isOwner;
+
     const handleSaveMemberPerms = async () => {
         if (!myMemberAccess.canView) {
             toast.error('You do not have permission to view member permissions');
@@ -348,6 +365,29 @@ export default function RoleDetail() {
         }
         return tablePerms[tableName] || createEmptyTablePerm();
     };
+
+    const getDefaultColumnPerm = (tableName) => {
+        const tablePerm = getTablePerm(tableName);
+        return {
+            canView: !!(tablePerm.canViewData || tablePerm.canViewStructure),
+            canCreate: !!tablePerm.canCreateData,
+            canEdit: !!(tablePerm.canEditData || tablePerm.canEditStructure),
+            canDelete: !!tablePerm.canDeleteStructure,
+        };
+    };
+
+    const getColumnPerm = (tableName, columnName) => {
+        if (role?.name === 'Super Admin') {
+            return {
+                canView: true,
+                canCreate: true,
+                canEdit: true,
+                canDelete: true,
+            };
+        }
+        return columnPerms[`${tableName}.${columnName}`] || getDefaultColumnPerm(tableName);
+    };
+
     const getMyTablePerm = (tableName) => {
         if (myRole?.role === 'Super Admin') {
             return {
@@ -370,6 +410,21 @@ export default function RoleDetail() {
             };
         }
         return myTablePerms[tableName] || createEmptyTablePerm();
+    };
+
+    const canManageColumnField = (tableName, field) => {
+        const myTablePerm = getMyTablePerm(tableName);
+        return !!(myTablePerm.canGrantDelegate || myGrants.canGrantDelegate);
+    };
+
+    const updateColumnField = (tableName, columnName, field, value) => {
+        setColumnPerms((prev) => ({
+            ...prev,
+            [`${tableName}.${columnName}`]: {
+                ...getColumnPerm(tableName, columnName),
+                [field]: value,
+            },
+        }));
     };
 
     const canManageTableField = (tableName, field) => {
@@ -429,16 +484,16 @@ export default function RoleDetail() {
                 const perm = normalizeTablePerm(getTablePerm(table.tableName));
                 return api.post(`/api/projects/${projectId}/roles/${roleId}/table-permissions`, {
                     tableName: table.tableName,
-                    canView: perm.canViewData || perm.canViewStructure,
+                    canView: false,
                     canViewData: perm.canViewData,
                     canViewStructure: perm.canViewStructure,
-                    canCreate: perm.canCreate,
+                    canCreate: false,
                     canCreateData: perm.canCreateData,
                     canCreateStructure: perm.canCreateStructure,
-                    canEdit: perm.canEditData || perm.canEditStructure,
+                    canEdit: false,
                     canEditData: perm.canEditData,
                     canEditStructure: perm.canEditStructure,
-                    canDelete: perm.canDeleteData || perm.canDeleteStructure || perm.canDeleteTable,
+                    canDelete: false,
                     canDeleteData: perm.canDeleteData,
                     canDeleteStructure: perm.canDeleteStructure,
                     canDeleteTable: perm.canDeleteTable,
@@ -478,6 +533,59 @@ export default function RoleDetail() {
         }
     };
 
+    const handleSaveColumnPerms = async () => {
+        if (!myRoleAccess.canView) {
+            toast.error('You do not have permission to manage column permissions');
+            return;
+        }
+
+        try {
+            const tableGrantPayloads = tables.map((table) => {
+                const perm = normalizeTablePerm(getTablePerm(table.tableName));
+                return api.post(`/api/projects/${projectId}/roles/${roleId}/table-permissions`, {
+                    tableName: table.tableName,
+                    canView: false,
+                    canViewData: perm.canViewData,
+                    canViewStructure: perm.canViewStructure,
+                    canCreate: false,
+                    canCreateData: perm.canCreateData,
+                    canCreateStructure: perm.canCreateStructure,
+                    canEdit: false,
+                    canEditData: perm.canEditData,
+                    canEditStructure: perm.canEditStructure,
+                    canDelete: false,
+                    canDeleteData: perm.canDeleteData,
+                    canDeleteStructure: perm.canDeleteStructure,
+                    canDeleteTable: perm.canDeleteTable,
+                    canGrantView: perm.canGrantView,
+                    canGrantCreate: perm.canGrantCreate,
+                    canGrantEdit: perm.canGrantEdit,
+                    canGrantDelete: perm.canGrantDelete,
+                    canGrantDelegate: perm.canGrantDelegate,
+                });
+            });
+
+            const payloads = Object.entries(columnPerms).map(([key, perm]) => {
+                const [tableName, ...columnParts] = key.split('.');
+                const columnName = columnParts.join('.');
+
+                return api.post(`/api/projects/${projectId}/roles/${roleId}/column-permissions`, {
+                    tableName,
+                    columnName,
+                    canView: perm.canView,
+                    canCreate: perm.canCreate,
+                    canEdit: perm.canEdit,
+                    canDelete: perm.canDelete,
+                });
+            });
+
+            await Promise.all([...tableGrantPayloads, ...payloads]);
+            toast.success('Column permissions saved!');
+        } catch (err) {
+            toast.error(err.response?.data?.message || 'Failed to save column permissions');
+        }
+    };
+
     if (loading) return (
         <Layout>
             <div className="text-gray-400 text-center py-12">Loading...</div>
@@ -509,6 +617,7 @@ export default function RoleDetail() {
                     ...(myRoleAccess.canView ? [{ id: 'role', label: 'Role Permissions', icon: Shield }] : []),
                     ...(myMemberAccess.canView ? [{ id: 'member', label: 'Member Permissions', icon: Users }] : []),
                     ...(myRoleAccess.canView ? [{ id: 'tables', label: 'Tables', icon: Table }] : []),
+                    ...(myRoleAccess.canView ? [{ id: 'columns', label: 'Columns', icon: Table }] : []),
                 ].map((tab) => {
                     const Icon = tab.icon;
                     return (
@@ -542,6 +651,9 @@ export default function RoleDetail() {
                             <Toggle label="Can Delete" value={rolePerms.canDelete}
                                 onChange={(v) => setRolePerms({ ...rolePerms, canDelete: v })}
                                 disabled={isRoleToggleDisabled('canDelete')} />
+                            <Toggle label="Can View Audit Logs" value={rolePerms.canViewAuditLogs}
+                                onChange={(v) => setRolePerms({ ...rolePerms, canViewAuditLogs: v })}
+                                disabled={!canManageAuditLogAccess} />
                         </div>
                     </div>
 
@@ -783,6 +895,87 @@ export default function RoleDetail() {
                             <button onClick={handleSaveTablePerms}
                                 className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg transition">
                                 <Save size={16} /> Save Table Permissions
+                            </button>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'columns' && (
+                <div className="space-y-6">
+                    {tables.length === 0 ? (
+                        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 text-gray-400">
+                            Sync a database connection to manage column permissions.
+                        </div>
+                    ) : (
+                        <>
+                            {tables.map((table) => (
+                                <div key={`columns-${table.tableName}`} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOpenColumnTables((prev) => ({ ...prev, [table.tableName]: !prev[table.tableName] }))}
+                                        className="w-full flex items-center justify-between px-5 py-4 text-left"
+                                    >
+                                        <div>
+                                            <p className="text-white font-medium">{table.tableName}</p>
+                                            <p className="text-gray-400 text-sm mt-1">{table.columns?.length || 0} columns</p>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <TablePermissionCheckbox
+                                                checked={getTablePerm(table.tableName).canGrantDelegate}
+                                                onChange={(checked) => updateTableField(table.tableName, 'canGrantDelegate', checked)}
+                                                disabled={!canManageTableField(table.tableName, 'canGrantDelegate')}
+                                                label="Grant All"
+                                            />
+                                            <ChevronDown
+                                                size={18}
+                                                className={`text-gray-400 transition ${openColumnTables[table.tableName] ? 'rotate-180' : ''}`}
+                                            />
+                                        </div>
+                                    </button>
+
+                                    {openColumnTables[table.tableName] && (
+                                        <div className="border-t border-gray-800 px-5 py-4 space-y-3">
+                                            <div
+                                                className="grid gap-4 text-xs uppercase tracking-wider text-gray-500"
+                                                style={{ gridTemplateColumns: '220px repeat(4, minmax(0, 1fr))' }}
+                                            >
+                                                <span>Column</span>
+                                                <span>Can View</span>
+                                                <span>Can Create</span>
+                                                <span>Can Edit</span>
+                                                <span>Can Delete</span>
+                                            </div>
+
+                                            {(table.columns || []).map((column) => (
+                                                <div
+                                                    key={`${table.tableName}.${column.columnName}`}
+                                                    className="grid gap-4 items-center rounded-lg bg-gray-800/40 px-4 py-3"
+                                                    style={{ gridTemplateColumns: '220px repeat(4, minmax(0, 1fr))' }}
+                                                >
+                                                    <div>
+                                                        <p className="text-white text-sm">{column.columnName}</p>
+                                                        <p className="text-gray-500 text-xs">{column.dataType}</p>
+                                                    </div>
+                                                    {['canView', 'canCreate', 'canEdit', 'canDelete'].map((field) => (
+                                                        <TablePermissionCheckbox
+                                                            key={`${table.tableName}.${column.columnName}.${field}`}
+                                                            checked={getColumnPerm(table.tableName, column.columnName)[field]}
+                                                            onChange={(checked) => updateColumnField(table.tableName, column.columnName, field, checked)}
+                                                            disabled={!canManageColumnField(table.tableName, field)}
+                                                            label={field.replace('can', '')}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+
+                            <button onClick={handleSaveColumnPerms}
+                                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg transition">
+                                <Save size={16} /> Save Column Permissions
                             </button>
                         </>
                     )}

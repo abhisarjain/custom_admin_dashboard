@@ -33,13 +33,19 @@ public class RoleColumnPermission {
     @Column(name = "can_view", nullable = false)
     private boolean canView = false;
 
+    @Column(name = "can_create", nullable = false, columnDefinition = "boolean default false")
+    private boolean canCreate = false;
+
     @Column(name = "can_edit", nullable = false)
     private boolean canEdit = false;
 
-    @Column(name = "can_grant_view", nullable = false)
+    @Column(name = "can_delete", nullable = false, columnDefinition = "boolean default false")
+    private boolean canDelete = false;
+
+    @Column(name = "can_grant_view", nullable = false, columnDefinition = "boolean default false")
     private boolean canGrantView = false;
 
-    @Column(name = "can_grant_edit", nullable = false)
+    @Column(name = "can_grant_edit", nullable = false, columnDefinition = "boolean default false")
     private boolean canGrantEdit = false;
 
     @Column(name = "created_at", updatable = false)

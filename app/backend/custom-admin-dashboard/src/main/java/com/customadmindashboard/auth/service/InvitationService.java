@@ -1,5 +1,6 @@
 package com.customadmindashboard.auth.service;
 
+import com.customadmindashboard.audit.service.AuditService;
 import com.customadmindashboard.auth.dto.AcceptInviteRequest;
 import com.customadmindashboard.auth.dto.InvitationResponse;
 import com.customadmindashboard.auth.dto.InviteRequest;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -34,6 +36,7 @@ public class InvitationService {
     private final ProjectMemberRepository projectMemberRepository;
     private final RoleRepository roleRepository;
     private final RoleMemberPermissionRepository roleMemberPermissionRepository;
+    private final AuditService auditService;
 
     // Invite bhejo
     @Transactional
@@ -103,6 +106,20 @@ public class InvitationService {
 
         invitation = invitationRepository.save(invitation);
 
+        LinkedHashMap<String, Object> invitationState = new LinkedHashMap<>();
+        invitationState.put("email", invitation.getEmail());
+        invitationState.put("role", role.getName());
+        invitationState.put("status", invitation.getStatus());
+        auditService.publish(
+                inviter,
+                project,
+                "INVITATION_SENT",
+                null,
+                String.valueOf(invitation.getId()),
+                null,
+                invitationState
+        );
+
         return mapToResponse(invitation);
     }
 
@@ -156,6 +173,25 @@ public class InvitationService {
         // Status update karo
         invitation.setStatus("accepted");
         invitationRepository.save(invitation);
+
+        LinkedHashMap<String, Object> oldValue = new LinkedHashMap<>();
+        oldValue.put("email", invitation.getEmail());
+        oldValue.put("status", "pending");
+
+        LinkedHashMap<String, Object> newValue = new LinkedHashMap<>();
+        newValue.put("email", invitation.getEmail());
+        newValue.put("status", "accepted");
+        newValue.put("role", invitation.getRole().getName());
+        auditService.publish(
+                tenant,
+                invitation.getProject(),
+                "INVITATION_ACCEPTED",
+                null,
+                String.valueOf(invitation.getId()),
+                oldValue,
+                newValue
+        );
+
     }
 
     @Transactional
@@ -185,7 +221,20 @@ public class InvitationService {
             throw new BadRequestException("Access denied");
         }
 
+        LinkedHashMap<String, Object> cancelledInvitation = new LinkedHashMap<>();
+        cancelledInvitation.put("email", invitation.getEmail());
+        cancelledInvitation.put("role", invitation.getRole().getName());
+        cancelledInvitation.put("status", invitation.getStatus());
         invitationRepository.delete(invitation);
+        auditService.publish(
+                tenant,
+                project,
+                "INVITATION_CANCELLED",
+                null,
+                String.valueOf(invitationId),
+                cancelledInvitation,
+                null
+        );
     }
 
     private InvitationResponse mapToResponse(Invitation inv) {
