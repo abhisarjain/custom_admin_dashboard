@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 spring:
   application:
@@ -9,19 +9,19 @@ spring:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/admin_platform_db
-    username: admin_user
-    password: admin123
+    url: jdbc:postgresql://aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require&prepareThreshold=0&preparedStatementCacheQueries=0
+    username: postgres.smolrlrhchqxmvrkwdgw
+    password: Cabhipersonal@1289
     driver-class-name: org.postgresql.Driver
 
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
-        format_sql: true
+        format_sql: false
 
   security:
     user:
@@ -29,11 +29,13 @@ spring:
 
 jasypt:
   encryptor:
-    password: your-secret-encryption-key
+    password: myJasyptEncryptionKey2024AdminDashboard
 
 jwt:
-  secret: your-super-secret-jwt-key-which-is-long-enough-for-hs256-algorithm
+  secret: mySecretJwtKey2024ForAdminDashboardPlatformApp
   expiration: 86400000
+
 logging:
   level:
-    com.customadmindashboard: DEBUG
+    com.customadmindashboard: INFO
+
